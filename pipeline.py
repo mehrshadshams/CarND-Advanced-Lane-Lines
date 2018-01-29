@@ -95,8 +95,8 @@ class Pipeline(object):
             return pickle.load(f)
 
     @staticmethod
-    def save_image(fname, img, **kwargs):
-        mpimg.imsave('{}/{}'.format(IMAGES_DIR, fname), img, **kwargs)
+    def save_image(fname, img, out_dir=IMAGES_DIR, **kwargs):
+        mpimg.imsave(os.path.join(out_dir, fname), img, **kwargs)
 
     def run(self):
         perspective_file = '{}.pkl'.format(PERSPECTIVE_FILE)
@@ -126,9 +126,14 @@ class Pipeline(object):
         if self._verbose:
             Pipeline.save_image('{}_binary_wap.jpg'.format(self._file_name_no_ext), binary_warped, cmap='gray')
 
-        lane_finder = ConvolutionLaneFinder(binary_warped, self._verbose, self._file_name_no_ext)
-        left_fit, right_fit, left_curverad, right_curverad = lane_finder.find_lanes()
+        lane_finder = ConvolutionLaneFinder(binary_warped, self._image_undist, (M, M_inv), self._verbose, self._file_name_no_ext)
+        result, left_curverad, right_curverad = lane_finder.find_lanes()
 
+        print('Creating output image')
+
+        Pipeline.save_image("{}.jpg".format(self._file_name_no_ext), result, out_dir=OUT_DIR)
+        plt.imshow(result)
+        plt.waitforbuttonpress()
 
 
 def main(args):
