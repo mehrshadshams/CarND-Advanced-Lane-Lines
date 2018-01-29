@@ -1,0 +1,32 @@
+{
+  "default": {
+    "sobel_kernel": 5,
+    "mag_kernel": 5,
+    "dir_kernel": 5,
+    "sobel_x_thresh_min": 25,
+    "sobel_x_thresh_max": 125,
+    "sobel_y_thresh_min": 25,
+    "sobel_y_thresh_max": 125,
+    "mag_thresh_min": 30,
+    "mag_thresh_max": 150,
+    "dir_thresh_min": 0.9,
+    "dir_thresh_max": 1.1,
+    "sat_thresh_min": 170,
+    "sat_thresh_max": 255
+  },
+  "adjusted": {
+    "sobel_kernel": 5,
+    "mag_kernel": 5,
+    "dir_kernel": 5,
+    "sobel_x_thresh_min": 25,
+    "sobel_x_thresh_max": 125,
+    "sobel_y_thresh_min": 15,
+    "sobel_y_thresh_max": 125,
+    "mag_thresh_min": 30,
+    "mag_thresh_max": 150,
+    "dir_thresh_min": 0.9,
+    "dir_thresh_max": 1.1,
+    "sat_thresh_min": 180,
+    "sat_thresh_max": 254
+  }
+}
