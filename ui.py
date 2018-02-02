@@ -8,6 +8,7 @@ from pyforms.Controls import ControlButton
 from pyforms.Controls import ControlSlider
 from pyforms.Controls import ControlImage
 from utils import abs_sobel_thresh, threshold_image, mag_thresh, dir_threshold, threshold_color
+from color_test import thresh_bin_im
 
 import pyforms
 
@@ -65,7 +66,7 @@ class ThresholdingParameter(BaseWidget):
         # Define the event that will be called when the run button is processed
         self._runbutton.value = self.__runEvent
 
-        self.input_image = cv2.imread('test_images/test5.jpg')
+        self.input_image = cv2.imread('test_images/test1.jpg')
         self.input_image = cv2.cvtColor(self.input_image, cv2.COLOR_BGR2RGB)
 
         cv2.imwrite("a.jpg", self.input_image)
@@ -200,19 +201,36 @@ class ThresholdingParameter(BaseWidget):
         sat_thresh_min = self.sat_thresh_min.value
         sat_thresh_max = self.sat_thresh_max.value
 
-        gradient_threshold = threshold_image(test_image, ksize=sobel_kernel,
-                                             gradx_thresh=(sobel_x_thresh_min, sobel_x_thresh_max),
-                                             grady_thresh=(sobel_y_thresh_min, sobel_y_thresh_max),
-                                             magnitude_thresh=(mag_thresh_min, mag_thresh_max),
-                                             dir_thresh=(dir_thresh_min, dir_thresh_max))
+        # gradient_threshold = threshold_image(test_image, ksize=sobel_kernel,
+        #                                      gradx_thresh=(sobel_x_thresh_min, sobel_x_thresh_max),
+        #                                      grady_thresh=(sobel_y_thresh_min, sobel_y_thresh_max),
+        #                                      magnitude_thresh=(mag_thresh_min, mag_thresh_max),
+        #                                      dir_thresh=(dir_thresh_min, dir_thresh_max))
+
+        ksize = sobel_kernel
+
+        # Apply each of the thresholding functions
+        gradx = abs_sobel_thresh(test_image, orient='x', sobel_kernel=ksize, thresh=(sobel_x_thresh_min, sobel_x_thresh_max))
+        grady = abs_sobel_thresh(test_image, orient='y', sobel_kernel=ksize, thresh=(sobel_y_thresh_min, sobel_y_thresh_max))
+        mag_binary = mag_thresh(test_image, sobel_kernel=ksize, thresh=(mag_thresh_min, mag_thresh_max))
+        dir_binary = dir_threshold(test_image, sobel_kernel=ksize, thresh=(dir_thresh_min, dir_thresh_max))
+
+        gradient_threshold = np.zeros_like(dir_binary)
+        # gradient_threshold[(gradx == 1)] = 1
+        gradient_threshold[((gradx == 1) & (grady == 1)) | ((dir_binary == 1) & (mag_binary == 1))] = 1
 
         image_hsl = cv2.cvtColor(test_image, cv2.COLOR_RGB2HLS)
         s_channel = image_hsl[:, :, 2]
         color_threshold = np.zeros_like(s_channel)
         color_threshold[(s_channel >= sat_thresh_min) & (s_channel <= sat_thresh_max)] = 1
 
+        color_threshold = thresh_bin_im(test_image)
         binary = np.zeros_like(gradient_threshold)
         binary[(color_threshold == 1) | (gradient_threshold == 1)] = 1
+
+        # binary = np.zeros_like(gradient_threshold)
+        # binary[(color_threshold == 1) | (gradient_threshold == 1)] = 1
+        # binary[(gradient_threshold == 1)] = 1
 
         self._write_image(binary)
 

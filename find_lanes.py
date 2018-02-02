@@ -48,11 +48,15 @@ class ConvolutionLaneFinder(object):
             offset = window_width / 2
             l_min_index = int(max(l_center - offset - margin, 0))
             l_max_index = int(min(l_center + offset + margin, warped.shape[1]))
-            l_center = np.argmax(conv_signal[l_min_index:l_max_index]) + l_min_index - offset
+
+            if np.max(conv_signal[l_min_index:l_max_index]) > 0:
+                l_center = np.argmax(conv_signal[l_min_index:l_max_index]) + l_min_index - offset
 
             r_min_index = int(max(r_center - offset - margin, 0))
             r_max_index = int(min(r_center + offset + margin, warped.shape[1]))
-            r_center = np.argmax(conv_signal[r_min_index:r_max_index]) + r_min_index - offset
+
+            if np.max(conv_signal[r_min_index:r_max_index]) > 0:
+                r_center = np.argmax(conv_signal[r_min_index:r_max_index]) + r_min_index - offset
 
             window_centroids.append((l_center, r_center))
 
@@ -95,8 +99,9 @@ class ConvolutionLaneFinder(object):
         ax.plot(left_fitx, ploty, color='red')
         ax.plot(right_fitx, ploty, color='blue')
 
+        fig.savefig('images/{}_lines.jpg'.format(self._output))
+
         if self._verbose:
-            fig.savefig('images/{}_lines.jpg'.format(self._output))
             plt.show()
 
         # compute curvature
