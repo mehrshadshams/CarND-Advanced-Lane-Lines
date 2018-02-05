@@ -6,11 +6,13 @@ import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import pickle
 import os
+import logging
 
-from utils import threshold_image, threshold_color, abs_sobel_thresh, mag_thresh, dir_threshold, undistort_image, show_image_gray
-from find_lanes import ConvolutionLaneFinder
-from color_test import thresh_bin_im
+from utils import abs_sobel_thresh, mag_thresh, dir_threshold, undistort_image, show_image_gray, create_binary_image
+from find_lanes import LaneFitter
 
+# Import everything needed to edit/save/watch video clips
+from moviepy.editor import VideoFileClip
 
 OUT_DIR = "output_images"
 IMAGES_DIR = "images"
@@ -19,28 +21,31 @@ PERSPECTIVE_FILE = "perspective"
 
 class Pipeline(object):
     def __init__(self, args):
-        print("Loading '{}'".format(args.filename))
-        image = cv2.imread(args.filename)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
+        self._filename = args.filename
         self._verbose = args.verbose
-        self._image = image
-        self._file_name_no_ext = os.path.splitext(os.path.split(args.filename)[-1])[0]
+        self._show = args.show
+        self._filename_no_ext = os.path.splitext(os.path.split(args.filename)[-1])[0]
 
         if self._verbose and not os.path.exists(IMAGES_DIR):
             os.mkdir(IMAGES_DIR)
 
-        print('Loading threshold parameters...')
+        logging.info('Loading threshold parameters...')
         with open('parameters.json', 'r') as f:
             self._thresh_params = json.load(f)['adjusted']
 
-        print('Loading camera calibration parameters...')
+        logging.info('Loading camera calibration parameters...')
         with open('camera.pkl', 'rb') as f:
             camera = pickle.load(f)
 
         self._mtx, self._dist = camera['mtx'], camera['dist']
 
-        self._image_undist = undistort_image(image, self._mtx, self._dist)
+        if not args.perspective:
+            result = Pipeline.load_perspective_transform()
+            if result is None:
+                logging.warning("Please run with '--perspective' to compute perspective matrices")
+            else:
+                self._M, self._M_inv = result
+                self._lane_fitter: LaneFitter = LaneFitter((self._M, self._M_inv), self._verbose)
 
     def apply_thresholing(self, image):
         parameters = self._thresh_params
@@ -80,7 +85,7 @@ class Pipeline(object):
         # color_threshold = np.zeros_like(s_channel)
         # color_threshold[(s_channel >= parameters['sat_thresh_min']) & (s_channel <= parameters['sat_thresh_max'])] = 1
 
-        color_threshold = thresh_bin_im(image)
+        color_threshold = create_binary_image(image)
 
         binary = np.zeros_like(gradient_threshold)
         binary[(color_threshold == 1) | (gradient_threshold == 1)] = 1
@@ -88,8 +93,13 @@ class Pipeline(object):
 
         return binary
 
+    def load_image(self):
+        image = cv2.imread(self._filename)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        return image
+
     def find_perspective_transform(self):
-        image = self._image_undist
+        image = undistort_image(self.load_image(), self._mtx, self._dist)
         imshape = image.shape
 
         # src_points = [(600, 445), (675, 445), (1040, 685), (253, 685)]
@@ -101,7 +111,7 @@ class Pipeline(object):
         M = cv2.getPerspectiveTransform(src, dst)
         M_inv = cv2.getPerspectiveTransform(dst, src)
 
-        print('Writing perspective matrices...')
+        logging.info('Writing perspective matrices...')
         with open('{}.pkl'.format(PERSPECTIVE_FILE), 'wb') as f:
             pickle.dump([M, M_inv], f)
 
@@ -121,7 +131,7 @@ class Pipeline(object):
             plt.imshow(warped)
             plt.waitforbuttonpress()
 
-        print('Perspective matrices computed and stored')
+        logging.info('Perspective matrices computed and stored')
 
     @staticmethod
     def load_perspective_transform():
@@ -136,30 +146,57 @@ class Pipeline(object):
     def save_image(fname, img, out_dir=IMAGES_DIR, **kwargs):
         mpimg.imsave(os.path.join(out_dir, fname), img, **kwargs)
 
-    @property
-    def undistorted_image(self):
-        return self._image_undist
+    @staticmethod
+    def factory(args):
+        if args.mode == 'image':
+            return ImagePipeline(args)
+        elif args.mode == 'video':
+            return VideoPipeline(args)
+
+        raise RuntimeError("Unknown mode {}".format(args.mode))
+
+    @staticmethod
+    def add_overlay(result, *args):
+        if args is None or len(args) == 0:
+            return result
+
+        imshape = result.shape
+
+        coeff = max(4, len(args))
+        append = np.zeros((imshape[0], imshape[1] // coeff, 3), dtype=np.uint8)
+
+        for idx, img in enumerate(args):
+            temp = cv2.resize(img, (img.shape[1]//coeff, img.shape[0]//coeff))
+
+            if len(temp.shape) < 3:
+                temp = np.dstack([temp, temp, temp])
+
+            temp = (temp / temp.max() * 255).astype(np.uint8)
+
+            append[idx * temp.shape[0]:(idx + 1) * temp.shape[0], :temp.shape[1], :] = temp
+
+        return np.hstack([result, append])
 
     def run(self):
-        result = Pipeline.load_perspective_transform()
+        pass
 
-        if result is None:
-            print("Please run with '--perspective' to compute perspective matrices")
-            return
+    def process_image(self, image):
+        M, M_inv = self._M, self._M_inv
 
-        M, M_inv = result
-
-        Pipeline.save_image('{}_undist.jpg'.format(self._file_name_no_ext), self._image_undist)
-
-        image = self._image_undist
-        imshape = image.shape
-
-        binary = self.apply_thresholing(image)
-
-        Pipeline.save_image('{}_binary.jpg'.format(self._file_name_no_ext), binary, cmap='gray')
+        image_undist = undistort_image(image, self._mtx, self._dist)
 
         if self._verbose:
-            print('Binary threshold...')
+            Pipeline.save_image('{}_undist.jpg'.format(self._filename_no_ext), image_undist)
+
+        imshape = image.shape
+
+        logging.info('Creating binary threshold...')
+        binary = self.apply_thresholing(image_undist)
+
+        if self._verbose:
+            Pipeline.save_image('{}_binary.jpg'.format(self._filename_no_ext), binary, cmap='gray')
+
+        if self._show:
             show_image_gray(binary)
             plt.waitforbuttonpress()
 
@@ -169,28 +206,68 @@ class Pipeline(object):
         # warped_temp = cv2.warpPerspective(im2, M, (imshape[1], imshape[0]), flags=cv2.INTER_LINEAR)
         # plt.imshow(warped_temp)
 
-        print('Warping the image')
-        warped = cv2.warpPerspective(image, M, (imshape[1], imshape[0]), flags=cv2.INTER_LINEAR)
+        logging.info('Warping the image')
+        warped = cv2.warpPerspective(image_undist, M, (imshape[1], imshape[0]), flags=cv2.INTER_LINEAR)
 
-        print('Warped image')
-        Pipeline.save_image('{}_warp.jpg'.format(self._file_name_no_ext), warped)
+        if self._verbose:
+            logging.info('Warped image')
+            Pipeline.save_image('{}_warp.jpg'.format(self._filename_no_ext), warped)
 
         binary_warped = cv2.warpPerspective(binary, M, (imshape[1], imshape[0]), flags=cv2.INTER_LINEAR)
-        Pipeline.save_image('{}_binary_wap.jpg'.format(self._file_name_no_ext), binary_warped, cmap='gray')
-
-        lane_finder = ConvolutionLaneFinder(binary_warped, self._image_undist, (M, M_inv), self._verbose, self._file_name_no_ext)
-        result, left_curverad, right_curverad = lane_finder.find_lanes()
-
-        print('Creating output image')
-
-        Pipeline.save_image("{}.jpg".format(self._file_name_no_ext), result, out_dir=OUT_DIR)
         if self._verbose:
+            Pipeline.save_image('{}_binary_wap.jpg'.format(self._filename_no_ext), binary_warped, cmap='gray')
+
+        result, fit_image = self._lane_fitter.fit_transform(binary_warped, image_undist)
+
+        result = Pipeline.add_overlay(result, binary, fit_image)
+
+        # lane_finder = LaneFittingLaneFinder(binary_warped, image, (M, M_inv), self._verbose, self._filename_no_ext)
+        # result, left_curverad, right_curverad = lane_finder.find_lanes()
+
+        logging.info('Creating output image')
+
+        if self._verbose:
+            Pipeline.save_image("{}.jpg".format(self._filename_no_ext), result, out_dir=OUT_DIR)
+
+        if self._show:
             plt.imshow(result)
             plt.waitforbuttonpress()
 
+        return result
+
+
+class ImagePipeline(Pipeline):
+    def __init__(self, args):
+        super().__init__(args)
+        logging.info("Loading '{}'".format(args.filename))
+        image = cv2.imread(args.filename)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        self._image = image
+
+    def run(self):
+        self.process_image(self._image)
+
+
+class VideoPipeline(Pipeline):
+    def __init__(self, args):
+        super().__init__(args)
+        self._clip = VideoFileClip(self._filename) #.subclip(30, 35)
+
+    def process_image(self, image):
+        try:
+            return super().process_image(image)
+        except Exception as e:
+            print(e)
+            return image
+
+    def run(self):
+        output = os.path.join(OUT_DIR, self._filename)
+        white_clip = self._clip.fl_image(self.process_image)  # NOTE: this function expects color images!!
+        white_clip.write_videofile(output, audio=False)
+
 
 def main(args):
-    pipeline = Pipeline(args)
+    pipeline = Pipeline.factory(args)
 
     if args.perspective:
         pipeline.find_perspective_transform()
@@ -204,7 +281,11 @@ if __name__ == '__main__':
     parser.add_argument("--mode", choices=['image', 'video'], help="Mode to operate in (image or video)")
     parser.add_argument("--perspective", action="store_true", help="Find perspective matrices")
     parser.add_argument("--verbose", action="store_true", help="Enable verbosity")
+    parser.add_argument("--show", action="store_true", help="Enable showing results")
 
     args = parser.parse_args()
+
+    if args.mode != 'video':
+        logging.basicConfig(level=logging.INFO)
 
     main(args)
