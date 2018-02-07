@@ -193,11 +193,3 @@ class Map(dict):
     def __delitem__(self, key):
         super(Map, self).__delitem__(key)
         del self.__dict__[key]
-
-
-if __name__ == "__main__":
-    image = mpimg.imread('test_images/test5.jpg')
-    # image = create_binary_image(image, ksize=5)
-    image = threshold_image(image)
-    show_image_gray(image)
-    plt.waitforbuttonpress()

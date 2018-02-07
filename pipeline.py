@@ -7,9 +7,11 @@ import matplotlib.pyplot as plt
 import pickle
 import os
 import logging
+import traceback
+from typing import List
 
 from utils import abs_sobel_thresh, mag_thresh, dir_threshold, undistort_image, show_image_gray, create_binary_image
-from find_lanes import LaneFitter
+from find_lanes import LaneFitter, Curvature
 
 # Import everything needed to edit/save/watch video clips
 from moviepy.editor import VideoFileClip
@@ -25,6 +27,9 @@ class Pipeline(object):
         self._verbose = args.verbose
         self._show = args.show
         self._filename_no_ext = os.path.splitext(os.path.split(args.filename)[-1])[0]
+        self._frame = 0
+        self._curvature_update = (0, 0, 0)
+        self._add_overlay = not args.skip_overlay
 
         if self._verbose and not os.path.exists(IMAGES_DIR):
             os.mkdir(IMAGES_DIR)
@@ -156,17 +161,18 @@ class Pipeline(object):
         raise RuntimeError("Unknown mode {}".format(args.mode))
 
     @staticmethod
-    def add_overlay(result, *args):
+    def add_overlay(result, frame, curvatures: List[Curvature], *args):
         if args is None or len(args) == 0:
             return result
 
         imshape = result.shape
 
         coeff = max(4, len(args))
-        append = np.zeros((imshape[0], imshape[1] // coeff, 3), dtype=np.uint8)
+        temp_shape = (imshape[0] // coeff, imshape[1] // coeff)
+        append = np.zeros((imshape[0], temp_shape[1], 3), dtype=np.uint8)
 
         for idx, img in enumerate(args):
-            temp = cv2.resize(img, (img.shape[1]//coeff, img.shape[0]//coeff))
+            temp = cv2.resize(img, (temp_shape[1], temp_shape[0]))
 
             if len(temp.shape) < 3:
                 temp = np.dstack([temp, temp, temp])
@@ -175,12 +181,22 @@ class Pipeline(object):
 
             append[idx * temp.shape[0]:(idx + 1) * temp.shape[0], :temp.shape[1], :] = temp
 
+        text = 'Left Curvature = {}m, Right Curvature = {}m'.format(int(curvatures[0].world), int(curvatures[1].world))
+        result = cv2.putText(img=result, text=text, org=(0, 50),
+                             fontFace=cv2.FONT_HERSHEY_DUPLEX, fontScale=1.0, color=(255, 255, 255))
+
+        text = '{0:05d}'.format(frame)
+        result = cv2.putText(img=result, text=text, org=(imshape[1] - 100, 50),
+                             fontFace=cv2.FONT_HERSHEY_DUPLEX, fontScale=1.0, color=(255, 255, 255))
+
         return np.hstack([result, append])
 
     def run(self):
         pass
 
     def process_image(self, image):
+        self._frame += 1
+
         M, M_inv = self._M, self._M_inv
 
         image_undist = undistort_image(image, self._mtx, self._dist)
@@ -217,12 +233,19 @@ class Pipeline(object):
         if self._verbose:
             Pipeline.save_image('{}_binary_wap.jpg'.format(self._filename_no_ext), binary_warped, cmap='gray')
 
-        result, fit_image = self._lane_fitter.fit_transform(binary_warped, image_undist)
+        result, fit_image, curvatures = self._lane_fitter.fit_transform(binary_warped, image_undist)
 
-        result = Pipeline.add_overlay(result, binary, fit_image)
+        if self._verbose:
+            Pipeline.save_image('{}_binary_warp_fit.jpg'.format(self._filename_no_ext), fit_image)
 
-        # lane_finder = LaneFittingLaneFinder(binary_warped, image, (M, M_inv), self._verbose, self._filename_no_ext)
-        # result, left_curverad, right_curverad = lane_finder.find_lanes()
+        cu = self._curvature_update
+        if self._frame - cu[0] >= 5 or cu[0] == 0:
+            self._curvature_update = (self._frame, curvatures[0], curvatures[1])
+        else:
+            curvatures = (cu[1], cu[2])
+
+        if self._add_overlay:
+            result = Pipeline.add_overlay(result, self._frame, curvatures, binary, warped, fit_image)
 
         logging.info('Creating output image')
 
@@ -251,13 +274,13 @@ class ImagePipeline(Pipeline):
 class VideoPipeline(Pipeline):
     def __init__(self, args):
         super().__init__(args)
-        self._clip = VideoFileClip(self._filename) #.subclip(30, 35)
+        self._clip = VideoFileClip(self._filename).subclip(0, 2)
 
     def process_image(self, image):
         try:
             return super().process_image(image)
         except Exception as e:
-            print(e)
+            traceback.print_exc()
             return image
 
     def run(self):
@@ -267,6 +290,10 @@ class VideoPipeline(Pipeline):
 
 
 def main(args):
+    if not os.path.exists(args.filename):
+        print('File {} not found.'.format(args.filename))
+        return
+
     pipeline = Pipeline.factory(args)
 
     if args.perspective:
@@ -281,6 +308,7 @@ if __name__ == '__main__':
     parser.add_argument("--mode", choices=['image', 'video'], help="Mode to operate in (image or video)")
     parser.add_argument("--perspective", action="store_true", help="Find perspective matrices")
     parser.add_argument("--verbose", action="store_true", help="Enable verbosity")
+    parser.add_argument("--skip_overlay", action="store_true", default=False, help="Skip overlay")
     parser.add_argument("--show", action="store_true", help="Enable showing results")
 
     args = parser.parse_args()

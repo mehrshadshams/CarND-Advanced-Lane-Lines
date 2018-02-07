@@ -7,15 +7,14 @@ from pyforms import BaseWidget
 from pyforms.Controls import ControlButton
 from pyforms.Controls import ControlSlider
 from pyforms.Controls import ControlImage
-from utils import abs_sobel_thresh, threshold_image, mag_thresh, dir_threshold, threshold_color
-from color_test import thresh_bin_im
+from utils import abs_sobel_thresh, mag_thresh, dir_threshold, create_binary_image
 
 import pyforms
 
 
 class ThresholdingParameter(BaseWidget):
     def __init__(self):
-        super(ThresholdingParameter, self).__init__('Computer vision algorithm example')
+        super(ThresholdingParameter, self).__init__('Thresholding tool')
 
         with open('parameters.json', 'r') as f:
             params_values = json.load(f)
@@ -224,7 +223,7 @@ class ThresholdingParameter(BaseWidget):
         color_threshold = np.zeros_like(s_channel)
         color_threshold[(s_channel >= sat_thresh_min) & (s_channel <= sat_thresh_max)] = 1
 
-        color_threshold = thresh_bin_im(test_image)
+        color_threshold = create_binary_image(test_image)
         binary = np.zeros_like(gradient_threshold)
         binary[(color_threshold == 1) | (gradient_threshold == 1)] = 1
 
