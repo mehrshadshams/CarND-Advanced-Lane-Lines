@@ -2,6 +2,8 @@ import cv2
 import glob
 import numpy as np
 import pickle
+import os
+from utils import undistort_image
 
 
 def main():
@@ -13,11 +15,14 @@ def main():
     obj_points = []
     img_points = []
 
-    for fname in images:
-        img = cv2.imread(fname)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    if not os.path.exists('images/camera_cal'):
+        os.mkdir('images/camera_cal')
 
-        ret, corners = cv2.findChessboardCorners(img, (9, 6), None)
+    for idx,fname in enumerate(images):
+        img = cv2.imread(fname)
+        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        ret, corners = cv2.findChessboardCorners(img_gray, (9, 6), None)
 
         if ret:
             obj_points.append(objp)
@@ -25,8 +30,8 @@ def main():
 
             # Draw and display the corners
             cv2.drawChessboardCorners(img, (9, 6), corners, ret)
-            # write_name = 'corners_found'+str(idx)+'.jpg'
-            # cv2.imwrite(write_name, img)
+            write_name = 'images/camera_cal/corners_found'+str(idx)+'.jpg'
+            cv2.imwrite(write_name, img)
             cv2.imshow('img', img)
             cv2.waitKey(500)
 
@@ -38,6 +43,9 @@ def main():
     print('Writing camera matrix and distortion coefficients...')
     with open('camera.pkl', 'wb') as f:
         pickle.dump({'mtx': mtx, 'dist': dist}, f)
+
+    undistorted = undistort_image(cv2.imread('camera_cal/calibration1.jpg'), mtx, dist)
+    cv2.imwrite("images/camera_cal/calibration1_undistorted.jpg", undistorted)
 
 
 if __name__ == "__main__":

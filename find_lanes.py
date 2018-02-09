@@ -54,18 +54,24 @@ class LaneFitter(object):
         self._M, self._M_inv = p_matrix
         self._buffer = RingBuffer(5)
 
-    def _compute_average_base(self):
+    def _compute_average_base(self, bases):
         items = self._buffer.get()
         if len(items) > 0:
             left_base = list(map(lambda x: x[0].base, items))
             right_base = list(map(lambda x: x[1].base, items))
 
-            left_base = int(np.average(left_base))
-            right_base = int(np.average(right_base))
+            left_base.append(bases[0])
+            right_base.append(bases[1])
+
+            w = np.logspace(0, 1, len(left_base))
+            w /= sum(w)
+
+            left_base = int(np.average(left_base, weights=w))
+            right_base = int(np.average(right_base, weights=w))
 
             return left_base, right_base
 
-        return None, None
+        return bases
 
     def _compute_average_fit(self, new_fit):
         items = self._buffer.get()
@@ -89,22 +95,9 @@ class LaneFitter(object):
         # compute curvature
 
         # Define y-value where we want radius of curvature
-        # I'll choose the maximum y-value, corresponding to the bottom of the image
-
         y_eval = np.max(ploty)
 
         curve_rad = ((1 + (2 * fit[0] * y_eval + fit[1]) ** 2) ** 1.5) / np.absolute(2 * fit[0])
-
-        # # Define conversions in x and y from pixels space to meters
-        # ym_per_pix = 30 / imshape[0]  # meters per pixel in y dimension
-        # xm_per_pix = 3.7 / 700  # meters per pixel in x dimension
-        #
-        # # Fit new polynomials to x,y in world space
-        # fit_cr = np.polyfit(ploty * ym_per_pix, fitx * xm_per_pix, 2)
-        #
-        # # Calculate the new radii of curvature
-        # curve_rad_real = ((1 + (2 * fit_cr[0] * y_eval * ym_per_pix + fit_cr[1]) ** 2) ** 1.5) / \
-        #                 np.absolute(2 * fit_cr[0])
 
         fit_cr = np.polyfit(ploty * LaneFitter.ym_per_pix, fitx * LaneFitter.xm_per_pix, 2)
 
@@ -136,18 +129,19 @@ class LaneFitter(object):
         cv2.polylines(img, points, True, (0, 255, 255), thickness=2)
 
     def fit(self, image):
+        """
+        This method find the line pixels on the bird eye view binary image
+        :param image:
+        :return:
+        """
         imshape = image.shape
         hist = np.sum(image[imshape[0] // 2:, :], axis=0)
 
-        left_base, right_base = self._compute_average_base()
-
         midpoint = hist.shape[0] // 2
+        new_left_base = np.argmax(hist[:midpoint])
+        new_right_base = np.argmax(hist[midpoint:]) + midpoint
 
-        if left_base is None:
-            left_base = np.argmax(hist[:midpoint])
-
-        if right_base is None:
-            right_base = np.argmax(hist[midpoint:]) + midpoint
+        left_base, right_base = self._compute_average_base((new_left_base, new_right_base))
 
         out_img = np.dstack([image, image, image]) * 255
         n_windows = 9
@@ -225,18 +219,26 @@ class LaneFitter(object):
         left_curvature = self._compute_curvature(ploty, left_fit, left_fitx)
         right_curvature = self._compute_curvature(ploty, right_fit, right_fitx)
 
+        offset = LaneFitter.xm_per_pix * ((left_base + (right_base - left_base) / 2) - imshape[1]//2)
+
         if self._left is not None and self._right is not None:
             self._buffer.append((self._left, self._right))
 
-        self._left = Lane(left_base, left_fit, left_fitx, left_curvature)
-        self._right = Lane(right_base, right_fit, right_fitx, right_curvature)
+        self._left = Lane(new_left_base, left_fit, left_fitx, left_curvature)
+        self._right = Lane(new_right_base, right_fit, right_fitx, right_curvature)
 
         logging.info('Curvature (pixel space): {}'.format((self._left.curvature.pixel, self._right.curvature.pixel)))
         logging.info('Curvature (world space): {}'.format((self._left.curvature.world, self._right.curvature.world)))
+        logging.info('Distance from center: {:.2}m'.format(offset))
 
-        return out_img
+        return out_img, offset
 
     def transform(self, image):
+        """
+        This method transforms the identified lanes back to the original image and draws the lanes on the road
+        :param image:
+        :return:
+        """
         # Create an image to draw the lines on
         imshape = image.shape
         color_warp = np.zeros(imshape, dtype=np.uint8)
@@ -261,6 +263,6 @@ class LaneFitter(object):
         return result, (left.curvature, right.curvature)
 
     def fit_transform(self, binary_image, color_image):
-        fit_image = self.fit(binary_image)
+        fit_image, offset = self.fit(binary_image)
         final_image, curvatures = self.transform(color_image)
-        return final_image, fit_image, curvatures
+        return final_image, fit_image, curvatures, offset

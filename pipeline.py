@@ -13,12 +13,19 @@ from typing import List
 from utils import abs_sobel_thresh, mag_thresh, dir_threshold, undistort_image, show_image_gray, create_binary_image
 from find_lanes import LaneFitter, Curvature
 
-# Import everything needed to edit/save/watch video clips
 from moviepy.editor import VideoFileClip
 
 OUT_DIR = "output_images"
 IMAGES_DIR = "images"
 PERSPECTIVE_FILE = "perspective"
+
+
+class Parameters(object):
+    def __init__(self, frame, left_curvature: Curvature, right_curvature: Curvature, offset):
+        self.frame = frame
+        self.left_curvature = left_curvature
+        self.right_curvature = right_curvature
+        self.offset = offset
 
 
 class Pipeline(object):
@@ -28,7 +35,7 @@ class Pipeline(object):
         self._show = args.show
         self._filename_no_ext = os.path.splitext(os.path.split(args.filename)[-1])[0]
         self._frame = 0
-        self._curvature_update = (0, 0, 0)
+        self._parameters = Parameters(0, 0, 0, 0)
         self._add_overlay = not args.skip_overlay
 
         if self._verbose and not os.path.exists(IMAGES_DIR):
@@ -60,17 +67,10 @@ class Pipeline(object):
         # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         # image_gray = clahe.apply(image_gray)
 
-        # plt.imshow(image_gray, cmap='gray')
-        # plt.waitforbuttonpress()
-
         gradx_thresh = (parameters['sobel_x_thresh_min'], parameters['sobel_x_thresh_max'])
         grady_thresh = (parameters['sobel_y_thresh_min'], parameters['sobel_y_thresh_max'])
         magnitude_thresh = (parameters['mag_thresh_min'], parameters['mag_thresh_max'])
         dir_thresh = (parameters['dir_thresh_min'], parameters['dir_thresh_max'])
-
-        # gradient_threshold = threshold_image(image_gray, ksize=parameters['sobel_kernel'],
-        #                                      gradx_thresh=gradx_thresh, grady_thresh=grady_thresh,
-        #                                      magnitude_thresh=magnitude_thresh, dir_thresh=dir_thresh)
 
         ksize = parameters['sobel_kernel']
 
@@ -81,14 +81,7 @@ class Pipeline(object):
         dir_binary = dir_threshold(image_gray, sobel_kernel=ksize, thresh=dir_thresh)
 
         gradient_threshold = np.zeros_like(dir_binary)
-        # gradient_threshold[(gradx == 1)] = 1
         gradient_threshold[((gradx == 1) & (grady == 1)) | ((dir_binary == 1) & (mag_binary == 1))] = 1
-
-        # image_hsl = cv2.cvtColor(image, cv2.COLOR_RGB2HLS)
-        # s_channel = image_hsl[:, :, 2]
-        # s_channel = cv2.medianBlur(s_channel, 5)
-        # color_threshold = np.zeros_like(s_channel)
-        # color_threshold[(s_channel >= parameters['sat_thresh_min']) & (s_channel <= parameters['sat_thresh_max'])] = 1
 
         color_threshold = create_binary_image(image)
 
@@ -105,11 +98,12 @@ class Pipeline(object):
 
     def find_perspective_transform(self):
         image = undistort_image(self.load_image(), self._mtx, self._dist)
+
+        Pipeline.save_image('{}_undistorted.jpg'.format(self._filename_no_ext), image)
+
         imshape = image.shape
 
-        # src_points = [(600, 445), (675, 445), (1040, 685), (253, 685)]
         src_points = [(520, 504), (769, 504), (1100, imshape[0]), (217, imshape[0])]
-
         src = np.array([src_points], dtype=np.float32)
         dst = np.array([(350, 0), (950, 0), (950, imshape[0]), (350, imshape[0])], dtype=np.float32)
 
@@ -121,10 +115,6 @@ class Pipeline(object):
             pickle.dump([M, M_inv], f)
 
         # im2 = cv2.polylines(image, src.astype(np.int32), 1, (0, 255, 0), thickness=2)
-
-        # if self._verbose:
-            # plt.imshow(im2)
-            # plt.waitforbuttonpress()
 
         warped = cv2.warpPerspective(image, M, (imshape[1], imshape[0]), flags=cv2.INTER_LINEAR)
 
@@ -161,7 +151,7 @@ class Pipeline(object):
         raise RuntimeError("Unknown mode {}".format(args.mode))
 
     @staticmethod
-    def add_overlay(result, frame, curvatures: List[Curvature], *args):
+    def add_overlay(result, parameters: Parameters, *args):
         if args is None or len(args) == 0:
             return result
 
@@ -181,11 +171,12 @@ class Pipeline(object):
 
             append[idx * temp.shape[0]:(idx + 1) * temp.shape[0], :temp.shape[1], :] = temp
 
-        text = 'Left Curvature = {}m, Right Curvature = {}m'.format(int(curvatures[0].world), int(curvatures[1].world))
+        text = 'Left = {}m, Right = {}m, Offset = {:.2}m'\
+            .format(int(parameters.left_curvature.world), int(parameters.right_curvature.world), parameters.offset)
         result = cv2.putText(img=result, text=text, org=(0, 50),
                              fontFace=cv2.FONT_HERSHEY_DUPLEX, fontScale=1.0, color=(255, 255, 255))
 
-        text = '{0:05d}'.format(frame)
+        text = '{0:05d}'.format(parameters.frame)
         result = cv2.putText(img=result, text=text, org=(imshape[1] - 100, 50),
                              fontFace=cv2.FONT_HERSHEY_DUPLEX, fontScale=1.0, color=(255, 255, 255))
 
@@ -216,12 +207,6 @@ class Pipeline(object):
             show_image_gray(binary)
             plt.waitforbuttonpress()
 
-        # src_points = np.array([[(600, 445), (675, 445), (1040, 685), (253, 685)]])
-        # im2 = cv2.polylines(self._image_undist, src_points, 1, (0, 255, 0), thickness=2)
-        #
-        # warped_temp = cv2.warpPerspective(im2, M, (imshape[1], imshape[0]), flags=cv2.INTER_LINEAR)
-        # plt.imshow(warped_temp)
-
         logging.info('Warping the image')
         warped = cv2.warpPerspective(image_undist, M, (imshape[1], imshape[0]), flags=cv2.INTER_LINEAR)
 
@@ -233,19 +218,18 @@ class Pipeline(object):
         if self._verbose:
             Pipeline.save_image('{}_binary_wap.jpg'.format(self._filename_no_ext), binary_warped, cmap='gray')
 
-        result, fit_image, curvatures = self._lane_fitter.fit_transform(binary_warped, image_undist)
+        result, fit_image, curvatures, offset = self._lane_fitter.fit_transform(binary_warped, image_undist)
 
         if self._verbose:
             Pipeline.save_image('{}_binary_warp_fit.jpg'.format(self._filename_no_ext), fit_image)
 
-        cu = self._curvature_update
-        if self._frame - cu[0] >= 5 or cu[0] == 0:
-            self._curvature_update = (self._frame, curvatures[0], curvatures[1])
-        else:
-            curvatures = (cu[1], cu[2])
+        p = self._parameters
+        if self._frame - p.frame >= 5 or p.frame == 0:
+            self._parameters = Parameters(self._frame, curvatures[0], curvatures[1], offset)
+            p = self._parameters
 
         if self._add_overlay:
-            result = Pipeline.add_overlay(result, self._frame, curvatures, binary, warped, fit_image)
+            result = Pipeline.add_overlay(result, p, binary, warped, fit_image)
 
         logging.info('Creating output image')
 
@@ -274,7 +258,7 @@ class ImagePipeline(Pipeline):
 class VideoPipeline(Pipeline):
     def __init__(self, args):
         super().__init__(args)
-        self._clip = VideoFileClip(self._filename).subclip(0, 2)
+        self._clip = VideoFileClip(self._filename)
 
     def process_image(self, image):
         try:
