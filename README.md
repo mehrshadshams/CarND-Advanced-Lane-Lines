@@ -274,9 +274,18 @@ Since I keep track of the lines across frames once I find the baseline, for the 
   
 Here are the links to my videos:
 
-* [Project Video](http://youtube.com)
-* [Challenge Video](http://youtube.com)
-  
+* [Project Video](https://youtu.be/74GM8ggdKaY)
+
+<a href="http://www.youtube.com/watch?feature=player_embedded&v=74GM8ggdKaY
+" target="_blank"><img src="https://img.youtube.com/vi/74GM8ggdKaY/0.jpg" 
+alt="Udacity SDC Advanced Lane finding project video" width="240" height="180" border="10" /></a>
+
+* [Challenge Video](https://youtu.be/BrsE81f5-CI)
+
+<a href="http://www.youtube.com/watch?feature=player_embedded&v=BrsE81f5-CI
+" target="_blank"><img src="https://img.youtube.com/vi/BrsE81f5-CI/0.jpg" 
+alt="Udacity SDC Advanced Lane finding challenge video" width="240" height="180" border="10" /></a>
+
 ### Discussion
 
 I was able to get good results on the `project_video` and `challenge_video` but the result of the `harder_challenge_video` 
