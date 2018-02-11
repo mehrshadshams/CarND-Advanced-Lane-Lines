@@ -48,8 +48,8 @@ class LaneFitter(object):
     xm_per_pix = 3.7 / 700  # meters per pixel in x dimension
 
     def __init__(self, p_matrix, verbose=False):
-        self._left: Lane = None
-        self._right: Lane = None
+        self._left = Lane(None, None, None, None)
+        self._right: Lane(None, None, None, None)
         self._vebose = verbose
         self._M, self._M_inv = p_matrix
         self._buffer = RingBuffer(5)
@@ -60,8 +60,9 @@ class LaneFitter(object):
             left_base = list(map(lambda x: x[0].base, items))
             right_base = list(map(lambda x: x[1].base, items))
 
-            left_base.append(bases[0])
-            right_base.append(bases[1])
+            if bases is not None:
+                left_base.append(bases[0])
+                right_base.append(bases[1])
 
             w = np.logspace(0, 1, len(left_base))
             w /= sum(w)
@@ -135,25 +136,82 @@ class LaneFitter(object):
         :return:
         """
         imshape = image.shape
-        hist = np.sum(image[imshape[0] // 2:, :], axis=0)
-
-        midpoint = hist.shape[0] // 2
-        new_left_base = np.argmax(hist[:midpoint])
-        new_right_base = np.argmax(hist[midpoint:]) + midpoint
-
-        left_base, right_base = self._compute_average_base((new_left_base, new_right_base))
-
         out_img = np.dstack([image, image, image]) * 255
         n_windows = 9
         window_height = imshape[0] // n_windows
         margin = 100
         minpix = 50
 
-        nonzero = image.nonzero()
-        nonzero_y = np.array(nonzero[0])
-        nonzero_x = np.array(nonzero[1])
+        hist = np.sum(image[imshape[0] // 2:, :], axis=0)
 
-        left_lane_indices, right_lane_indices = [], []
+        midpoint = hist.shape[0] // 2
+
+        current_frame_left_base = np.argmax(hist[:midpoint])
+        current_frame_right_base = np.argmax(hist[midpoint:]) + midpoint
+
+        if self._left.fit_params is None or self._right.fit_params is None:
+            left_base, right_base = current_frame_left_base, current_frame_right_base
+
+            nonzero = image.nonzero()
+            nonzero_y = np.array(nonzero[0])
+            nonzero_x = np.array(nonzero[1])
+
+            left_lane_indices, right_lane_indices = [], []
+            leftx_current = left_base
+            rightx_current = right_base
+
+            for window in range(n_windows):
+                window_y_low = imshape[0] - (window + 1) * window_height
+                window_y_high = imshape[0] - window * window_height
+                window_x_left_low = leftx_current - margin
+                window_x_left_high = leftx_current + margin
+                window_x_right_low = rightx_current - margin
+                window_x_right_high = rightx_current + margin
+
+                left_indices = ((nonzero_y >= window_y_low) & (nonzero_y < window_y_high) &
+                                (nonzero_x >= window_x_left_low) & (nonzero_x <= window_x_left_high)).nonzero()[0]
+                right_indices = ((nonzero_y >= window_y_low) & (nonzero_y < window_y_high) &
+                                 (nonzero_x >= window_x_right_low) & (nonzero_x <= window_x_right_high)).nonzero()[0]
+
+                left_lane_indices.append(left_indices)
+                right_lane_indices.append(right_indices)
+
+                if len(left_indices) > minpix:
+                    leftx_current = np.int(np.mean(nonzero_x[left_indices]))
+                if len(right_indices) > minpix:
+                    rightx_current = np.int(np.mean(nonzero_x[right_indices]))
+
+            left_lane_indices = np.concatenate(left_lane_indices)
+            right_lane_indices = np.concatenate(right_lane_indices)
+
+            leftx = nonzero_x[left_lane_indices]
+            lefty = nonzero_y[left_lane_indices]
+            rightx = nonzero_x[right_lane_indices]
+            righty = nonzero_y[right_lane_indices]
+        else:
+            left_base, right_base = self._compute_average_base(None)
+
+            nonzero = image.nonzero()
+            nonzero_y = nonzero[0]
+            nonzero_x = nonzero[1]
+
+            left_fit = self._left.fit_params
+            right_fit = self._right.fit_params
+
+            margin = 100
+            left_lane_indices = ((nonzero_x > (left_fit[0] * (nonzero_y ** 2) + left_fit[1] * nonzero_y + left_fit[2] - margin)) & \
+                (nonzero_x < (left_fit[0] * (nonzero_y ** 2) + left_fit[1] * nonzero_y + left_fit[2] + margin)))
+            right_lane_indices = ((nonzero_x > (right_fit[0] * (nonzero_y ** 2) + right_fit[1] * nonzero_y + right_fit[2] - margin)) & (
+                nonzero_x < (right_fit[0] * (nonzero_y ** 2) + right_fit[1] * nonzero_y + right_fit[2] + margin)))
+
+            leftx = nonzero_x[left_lane_indices]
+            lefty = nonzero_y[left_lane_indices]
+            rightx = nonzero_x[right_lane_indices]
+            righty = nonzero_y[right_lane_indices]
+
+        left_fit = self.fit_polynomial(lefty, leftx)
+        right_fit = self.fit_polynomial(righty, rightx)
+
         leftx_current = left_base
         rightx_current = right_base
 
@@ -169,30 +227,6 @@ class LaneFitter(object):
                           2)
             cv2.rectangle(out_img, (window_x_right_low, window_y_low), (window_x_right_high, window_y_high),
                           (0, 255, 0), 2)
-
-            left_indices = ((nonzero_y >= window_y_low) & (nonzero_y < window_y_high) &
-                            (nonzero_x >= window_x_left_low) & (nonzero_x <= window_x_left_high)).nonzero()[0]
-            right_indices = ((nonzero_y >= window_y_low) & (nonzero_y < window_y_high) &
-                             (nonzero_x >= window_x_right_low) & (nonzero_x <= window_x_right_high)).nonzero()[0]
-
-            left_lane_indices.append(left_indices)
-            right_lane_indices.append(right_indices)
-
-            if len(left_indices) > minpix:
-                leftx_current = np.int(np.mean(nonzero_x[left_indices]))
-            if len(right_indices) > minpix:
-                rightx_current = np.int(np.mean(nonzero_x[right_indices]))
-
-        left_lane_indices = np.concatenate(left_lane_indices)
-        right_lane_indices = np.concatenate(right_lane_indices)
-
-        leftx = nonzero_x[left_lane_indices]
-        lefty = nonzero_y[left_lane_indices]
-        rightx = nonzero_x[right_lane_indices]
-        righty = nonzero_y[right_lane_indices]
-
-        left_fit = self.fit_polynomial(lefty, leftx)
-        right_fit = self.fit_polynomial(righty, rightx)
 
         ploty = np.linspace(0, image.shape[0] - 1, image.shape[0])
 
@@ -219,13 +253,12 @@ class LaneFitter(object):
         left_curvature = self._compute_curvature(ploty, left_fit, left_fitx)
         right_curvature = self._compute_curvature(ploty, right_fit, right_fitx)
 
-        offset = LaneFitter.xm_per_pix * ((left_base + (right_base - left_base) / 2) - imshape[1]//2)
+        offset = LaneFitter.xm_per_pix * ((current_frame_left_base + (current_frame_right_base - current_frame_left_base) / 2) - imshape[1]//2)
 
-        if self._left is not None and self._right is not None:
-            self._buffer.append((self._left, self._right))
+        self._left = Lane(left_base, left_fit, left_fitx, left_curvature)
+        self._right = Lane(right_base, right_fit, right_fitx, right_curvature)
 
-        self._left = Lane(new_left_base, left_fit, left_fitx, left_curvature)
-        self._right = Lane(new_right_base, right_fit, right_fitx, right_curvature)
+        self._buffer.append((self._left, self._right))
 
         logging.info('Curvature (pixel space): {}'.format((self._left.curvature.pixel, self._right.curvature.pixel)))
         logging.info('Curvature (world space): {}'.format((self._left.curvature.world, self._right.curvature.world)))
