@@ -19,11 +19,12 @@ class Curvature(object):
 
 
 class Lane(object):
-    def __init__(self, base, fit_params, fitx, curvature: Curvature):
+    def __init__(self, base, fit_params, fitx, curvature: Curvature, lane_indices):
         self._base = base
         self._fit_params = fit_params
         self._fitx = fitx
         self._curvature = curvature
+        self._lane_indices = lane_indices
 
     @property
     def base(self):
@@ -41,6 +42,10 @@ class Lane(object):
     def curvature(self) -> Curvature:
         return self._curvature
 
+    @property
+    def lane_indices(self):
+        return self._lane_indices
+
 
 class LaneFitter(object):
     # Define conversions in x and y from pixels space to meters
@@ -48,8 +53,8 @@ class LaneFitter(object):
     xm_per_pix = 3.7 / 700  # meters per pixel in x dimension
 
     def __init__(self, p_matrix, verbose=False):
-        self._left = Lane(None, None, None, None)
-        self._right: Lane(None, None, None, None)
+        self._left = Lane(None, None, None, None, None)
+        self._right: Lane(None, None, None, None, None)
         self._vebose = verbose
         self._M, self._M_inv = p_matrix
         self._buffer = RingBuffer(5)
@@ -149,12 +154,12 @@ class LaneFitter(object):
         current_frame_left_base = np.argmax(hist[:midpoint])
         current_frame_right_base = np.argmax(hist[midpoint:]) + midpoint
 
+        nonzero = image.nonzero()
+        nonzero_y = nonzero[0]
+        nonzero_x = nonzero[1]
+
         if self._left.fit_params is None or self._right.fit_params is None:
             left_base, right_base = current_frame_left_base, current_frame_right_base
-
-            nonzero = image.nonzero()
-            nonzero_y = np.array(nonzero[0])
-            nonzero_x = np.array(nonzero[1])
 
             left_lane_indices, right_lane_indices = [], []
             leftx_current = left_base
@@ -190,10 +195,6 @@ class LaneFitter(object):
             righty = nonzero_y[right_lane_indices]
         else:
             left_base, right_base = self._compute_average_base(None)
-
-            nonzero = image.nonzero()
-            nonzero_y = nonzero[0]
-            nonzero_x = nonzero[1]
 
             left_fit = self._left.fit_params
             right_fit = self._right.fit_params
@@ -233,7 +234,8 @@ class LaneFitter(object):
         # do sanity checking, are two lines relatively parallel?
         if left_fit is not None and right_fit is not None:
             slope_diff = self._compute_slope_mse(ploty, (left_fit, right_fit))
-            if slope_diff > 0.1:
+            print('slope: {}'.format(slope_diff))
+            if slope_diff > 0.15:
                 print('ignoring fit')
                 # ignore this fit
                 left_fit, right_fit = None, None
@@ -255,8 +257,8 @@ class LaneFitter(object):
 
         offset = LaneFitter.xm_per_pix * ((current_frame_left_base + (current_frame_right_base - current_frame_left_base) / 2) - imshape[1]//2)
 
-        self._left = Lane(left_base, left_fit, left_fitx, left_curvature)
-        self._right = Lane(right_base, right_fit, right_fitx, right_curvature)
+        self._left = Lane(left_base, left_fit, left_fitx, left_curvature, left_lane_indices)
+        self._right = Lane(right_base, right_fit, right_fitx, right_curvature, right_lane_indices)
 
         self._buffer.append((self._left, self._right))
 
@@ -266,20 +268,25 @@ class LaneFitter(object):
 
         return out_img, offset
 
-    def transform(self, image):
+    def transform(self, color_image, binary_image):
         """
         This method transforms the identified lanes back to the original image and draws the lanes on the road
         :param image:
         :return:
         """
         # Create an image to draw the lines on
-        imshape = image.shape
+        imshape = color_image.shape
         color_warp = np.zeros(imshape, dtype=np.uint8)
+        lanes_warp = np.zeros(imshape, dtype=np.uint8)
+
+        nonzero = binary_image.nonzero()
+        nonzero_y = nonzero[0]
+        nonzero_x = nonzero[1]
 
         left: Lane = self._left
         right: Lane = self._right
 
-        ploty = np.linspace(0, image.shape[0] - 1, image.shape[0])
+        ploty = np.linspace(0, imshape[0] - 1, imshape[0])
         # Recast the x and y points into usable format for cv2.fillPoly()
         pts_left = np.array([np.transpose(np.vstack([left.fit_x, ploty]))])
         pts_right = np.array([np.flipud(np.transpose(np.vstack([right.fit_x, ploty])))])
@@ -288,14 +295,22 @@ class LaneFitter(object):
         # Draw the lane onto the warped blank image
         cv2.fillPoly(color_warp, np.int_([pts]), (0, 255, 0))
 
-        # Warp the blank back to original image space using inverse perspective matrix (Minv)
+        lanes_warp[nonzero_y[left.lane_indices], nonzero_x[left.lane_indices]] = [255, 0, 0]
+        lanes_warp[nonzero_y[right.lane_indices], nonzero_x[right.lane_indices]] = [0, 0, 255]
+
+        # Warp the image back to original image space using inverse perspective matrix (Minv)
         new_warp = cv2.warpPerspective(color_warp, self._M_inv, (imshape[1], imshape[0]))
+
         # Combine the result with the original image
-        result = cv2.addWeighted(image, 1, new_warp, 0.3, 0)
+        result = cv2.addWeighted(color_image, 0.9, new_warp, 0.3, 0)
+
+        # warp the lanes to the original image
+        lanes_unwarp = cv2.warpPerspective(lanes_warp, self._M_inv, (imshape[1], imshape[0]))
+        result = cv2.addWeighted(result, 1, lanes_unwarp, 1, 0)
 
         return result, (left.curvature, right.curvature)
 
     def fit_transform(self, binary_image, color_image):
         fit_image, offset = self.fit(binary_image)
-        final_image, curvatures = self.transform(color_image)
+        final_image, curvatures = self.transform(color_image, binary_image)
         return final_image, fit_image, curvatures, offset

@@ -89,7 +89,7 @@ The code for my perspective transform includes a function called `find_perspecti
 99 through 129 in the file `pipeline.py`:
 
 ```python
-src_points = [(520, 504), (769, 504), (1100, imshape[0]), (217, imshape[0])]
+src_points = [(580, 461), (702, 461), (1100, imshape[0]), (217, imshape[0])]
 src = np.array([src_points], dtype=np.float32)
 dst = np.array([(350, 0), (950, 0), (950, imshape[0]), (350, imshape[0])], dtype=np.float32)
 
@@ -101,8 +101,8 @@ This resulted in the following source and destination points:
 
 | Source        | Destination   | 
 |:-------------:|:-------------:| 
-| 520, 504      | 350, 0        | 
-| 769, 504      | 950, 0        |
+| 580, 461      | 350, 0        | 
+| 702, 461      | 950, 0        |
 | 1100, 720     | 950, 720      |
 | 217, 720      | 350, 720      |
 

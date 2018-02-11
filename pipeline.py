@@ -103,7 +103,7 @@ class Pipeline(object):
 
         imshape = image.shape
 
-        src_points = [(520, 504), (769, 504), (1100, imshape[0]), (217, imshape[0])]
+        src_points = [(580, 461), (702, 461), (1100, imshape[0]), (217, imshape[0])]
         src = np.array([src_points], dtype=np.float32)
         dst = np.array([(350, 0), (950, 0), (950, imshape[0]), (350, imshape[0])], dtype=np.float32)
 
