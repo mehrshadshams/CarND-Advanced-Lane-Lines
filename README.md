@@ -52,7 +52,7 @@ on all of the images to get a mapping between corners found and object points, t
 **camera matrix** and **distortion coefficient** which I store in a pickle file to be used later.
 
 |            Corners                 |           Original         |         Undistorted             |
-| ---------------------------------- |:--------------------------:| ------------------------------ :|
+| ---------------------------------- |:--------------------------:| ------------------------------  |
 | ![alt text][calibration_corners]   | ![alt text][calibration_1] | ![alt text][calibration_undist] |
 
 ### Pipeline
